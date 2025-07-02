@@ -74,26 +74,29 @@ export default function BoardPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
 
-  useEffect(() => {
-    const currentUser = getCurrentUser();
+useEffect(() => {
+  const loadUser = async () => {
+    const currentUser = await getCurrentUser();
     if (!currentUser) {
       router.push('/login');
       return;
     }
-    
     setUser(currentUser);
-    
+
     const boards = boardStorage.getBoards();
     const foundBoard = boards.find(b => b.id === boardId);
-    
+
     if (!foundBoard) {
       router.push('/dashboard');
       return;
     }
-    
+
     setBoard(foundBoard);
     setLoading(false);
-  }, [router, boardId]);
+  };
+
+  loadUser();
+}, [router, boardId]);
 
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
     if (selectedTool === 'select' || selectedTool === 'hand') return;

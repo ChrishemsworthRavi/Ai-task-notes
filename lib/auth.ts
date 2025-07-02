@@ -1,3 +1,5 @@
+import { supabase } from "@/lib/supabaseClient";
+
 export interface User {
   id: string;
   email: string;
@@ -6,83 +8,40 @@ export interface User {
   team: string;
 }
 
-export interface AuthState {
-  user: User | null;
-  isAuthenticated: boolean;
-}
-
-const AUTH_STORAGE_KEY = 'miro_auth';
-
-export const authStorage = {
-  getAuth: (): AuthState => {
-    if (typeof window === 'undefined') {
-      return { user: null, isAuthenticated: false };
-    }
-    
-    try {
-      const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (error) {
-      console.error('Error reading auth from localStorage:', error);
-    }
-    
-    return { user: null, isAuthenticated: false };
-  },
-
-  setAuth: (authState: AuthState): void => {
-    if (typeof window === 'undefined') return;
-    
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authState));
-    } catch (error) {
-      console.error('Error saving auth to localStorage:', error);
-    }
-  },
-
-  clearAuth: (): void => {
-    if (typeof window === 'undefined') return;
-    
-    try {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-    } catch (error) {
-      console.error('Error clearing auth from localStorage:', error);
-    }
-  }
-};
-
 export const login = async (email: string, password: string): Promise<User> => {
-  // Simulate API call
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  // Simple validation for demo
-  if (email && password.length >= 6) {
-    const user: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      email,
-      name: email.split('@')[0],
-      avatar: `https://api.dicebear.com/7.x/avatars/svg?seed=${email}`,
-      team: 'SmartFlow'
-    };
-    
-    const authState: AuthState = {
-      user,
-      isAuthenticated: true
-    };
-    
-    authStorage.setAuth(authState);
-    return user;
-  }
-  
-  throw new Error('Invalid credentials');
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) throw error;
+  if (!data.session || !data.user) throw new Error("Login failed. No session returned.");
+
+  const user: User = {
+    id: data.user.id,
+    email: data.user.email || "",
+    name: data.user.user_metadata?.full_name || data.user.email || "Anonymous",
+    avatar: `https://api.dicebear.com/7.x/avatars/svg?seed=${email}`,
+    team: data.user.user_metadata?.team || "SmartFlow",
+  };
+
+  return user;
 };
 
-export const logout = (): void => {
-  authStorage.clearAuth();
+export const logout = async (): Promise<void> => {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
 };
 
-export const getCurrentUser = (): User | null => {
-  const authState = authStorage.getAuth();
-  return authState.isAuthenticated ? authState.user : null;
+export const getCurrentUser = async (): Promise<User | null> => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session || !session.user) return null;
+
+  return {
+    id: session.user.id,
+    email: session.user.email || "",
+    name: session.user.user_metadata?.full_name || session.user.email || "Anonymous",
+    avatar: `https://api.dicebear.com/7.x/avatars/svg?seed=${session.user.email}`,
+    team: session.user.user_metadata?.team || "SmartFlow",
+  };
 };
