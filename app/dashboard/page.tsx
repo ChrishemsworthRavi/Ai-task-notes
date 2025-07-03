@@ -9,7 +9,7 @@ import Sidebar from "@/components/dashboard/sidebar";
 import Header from "@/components/dashboard/header";
 import TemplatesSection from "@/components/dashboard/templates-section";
 import BoardsTable from "@/components/dashboard/boards-table";
-import { Board, boardStorage, initializeSampleBoards } from "@/lib/boards";
+import { Board, mapDbBoardToBoard } from "@/lib/boards";
 
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const loadUser = async () => {
+    const loadUserAndBoards = async () => {
       const user = await getCurrentUser();
 
       if (!user) {
@@ -28,16 +28,15 @@ export default function DashboardPage() {
       }
 
       setUser(user);
-      initializeSampleBoards(user.id, user.name);
-      loadBoards();
+      await loadBoards(user.id);
       setLoading(false);
     };
 
-    loadUser();
+    loadUserAndBoards();
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
-        loadUser();
+        loadUserAndBoards();
       } else {
         setUser(null);
         router.push("/login");
@@ -49,9 +48,20 @@ export default function DashboardPage() {
     };
   }, [router]);
 
-  const loadBoards = () => {
-    const allBoards = boardStorage.getBoards();
-    setBoards(allBoards);
+  const loadBoards = async (userId: string) => {
+    const { data, error } = await supabase
+      .from("boards")
+      .select("*")
+      .eq("owner_id", userId)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching boards:", error);
+      return;
+    }
+
+    const clientBoards = (data || []).map(mapDbBoardToBoard);
+    setBoards(clientBoards);
   };
 
   if (loading) {
@@ -67,16 +77,12 @@ export default function DashboardPage() {
   }
 
   if (!user) {
-    return null; // We're redirecting — don't flash empty dashboard
+    return null;
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      <Sidebar
-        user={user}
-        currentPage={currentPage}
-        onPageChange={setCurrentPage}
-      />
+      <Sidebar user={user} currentPage={currentPage} onPageChange={setCurrentPage} />
       <div className="flex-1 flex flex-col">
         <Header user={user} />
         <main className="flex-1 p-8 overflow-auto">
@@ -86,7 +92,10 @@ export default function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3 }}
             >
-              <TemplatesSection user={user} onBoardCreate={loadBoards} />
+              <TemplatesSection
+                user={user}
+                onBoardCreate={() => loadBoards(user.id)}
+              />
             </motion.div>
 
             <motion.div
@@ -97,7 +106,7 @@ export default function DashboardPage() {
               <BoardsTable
                 boards={boards}
                 currentUser={user.id}
-                onBoardsChange={loadBoards}
+                onBoardsChange={() => loadBoards(user.id)}
               />
             </motion.div>
           </div>

@@ -1,51 +1,69 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { 
-  MoreHorizontal, 
-  Star, 
-  Trash2, 
-  Edit3, 
-  Copy,
-  Eye,
-  Users,
-  Grid3x3,
-  List
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
+import {
+  MoreHorizontal, Star, Trash2, Edit3, Copy, Eye, Grid3x3, List
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
-import { Board, boardStorage } from '@/lib/boards';
-import { useRouter } from 'next/navigation';
+import type { Board } from "@/lib/boards";
+
 
 interface BoardsTableProps {
-  boards: Board[];
-  currentUser: string;
-  onBoardsChange: () => void;
+boards: Board[];
+currentUser: string;
+onBoardsChange: () => void;
+}
+export interface BoardTransformed extends Board {
+  ownerId: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export default function BoardsTable({ boards, currentUser, onBoardsChange }: BoardsTableProps) {
+
+export default function BoardsTable({ currentUser }: BoardsTableProps) {
+  const [boards, setBoards] = useState<BoardTransformed[]>([]);
   const [sortBy, setSortBy] = useState('last-opened');
   const [filterBy, setFilterBy] = useState('all-boards');
   const [ownedBy, setOwnedBy] = useState('anyone');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const router = useRouter();
+
+
+  
+const fetchBoards = async () => {
+  const { data, error } = await supabase
+    .from("boards")
+    .select("*")
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    console.error("Error fetching boards:", error);
+    return;
+  }
+
+  setBoards((data || []).map(b => ({
+    ...b,
+    ownerId: b.owner_id,
+    createdAt: new Date(b.created_at),
+    updatedAt: new Date(b.updated_at),
+  })));
+};
+
+useEffect(() => {
+  fetchBoards();
+}, []);
+
 
   const getBoardTypeColor = (type: string) => {
     switch (type) {
@@ -67,42 +85,65 @@ export default function BoardsTable({ boards, currentUser, onBoardsChange }: Boa
     }
   };
 
-  const handleStarToggle = (boardId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    boardStorage.toggleStar(boardId);
-    onBoardsChange();
-  };
 
-  const handleBoardClick = (boardId: string) => {
-    router.push(`/board/${boardId}`);
-  };
 
-  const handleDeleteBoard = (boardId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm('Are you sure you want to delete this board?')) {
-      boardStorage.deleteBoard(boardId);
-      onBoardsChange();
+const handleStarToggle = async (boardId: string, e: React.MouseEvent) => {
+  e.stopPropagation();
+
+  const board = boards.find(b => b.id === boardId);
+  if (!board) return;
+
+  const { error } = await supabase
+    .from('boards')
+    .update({ starred: !board.starred })
+    .eq('id', boardId);
+
+  if (error) {
+    console.error('Failed to toggle star:', error);
+    alert('Error toggling star status');
+    return;
+  }
+
+  fetchBoards(); // Refetch after update
+};
+
+const handleDeleteBoard = async (boardId: string, e: React.MouseEvent) => {
+  e.stopPropagation();
+
+  if (confirm('Are you sure you want to delete this board?')) {
+    const { error } = await supabase
+      .from('boards')
+      .delete()
+      .eq('id', boardId);
+
+    if (error) {
+      console.error('Failed to delete board:', error);
+      alert('Error deleting board');
+      return;
     }
-  };
 
-  const sortedAndFilteredBoards = boards
-    .filter(board => {
-      if (filterBy === 'starred' && !board.starred) return false;
-      if (ownedBy === 'me' && board.ownerId !== currentUser) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'last-opened':
-          return b.updatedAt.getTime() - a.updatedAt.getTime();
-        case 'name':
-          return a.name.localeCompare(b.name);
-        case 'created':
-          return b.createdAt.getTime() - a.createdAt.getTime();
-        default:
-          return 0;
-      }
-    });
+    fetchBoards(); // Refetch after delete
+  }
+};
+
+const sortedAndFilteredBoards = boards
+  .filter(board => {
+    if (filterBy === 'starred' && !board.starred) return false;
+    if (ownedBy === 'me' && board.ownerId !== currentUser) return false;
+    return true;
+  })
+  .sort((a, b) => {
+  switch (sortBy) {
+    case 'last-opened':
+      return b.updatedAt.getTime() - a.updatedAt.getTime();
+    case 'name':
+      return a.name.localeCompare(b.name);
+    case 'created':
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    default:
+      return 0;
+  }
+})
 
   if (boards.length === 0) {
     return (
@@ -115,6 +156,10 @@ export default function BoardsTable({ boards, currentUser, onBoardsChange }: Boa
       </div>
     );
   }
+
+  const handleBoardClick = (boardId: string) => {
+  router.push(`/board/${boardId}`);
+};
 
   return (
     <div className="space-y-6">
@@ -322,4 +367,8 @@ export default function BoardsTable({ boards, currentUser, onBoardsChange }: Boa
       </div>
     </div>
   );
+}
+
+function onBoardsChange() {
+  throw new Error('Function not implemented.');
 }

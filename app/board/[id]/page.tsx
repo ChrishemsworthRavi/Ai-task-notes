@@ -1,50 +1,25 @@
 "use client";
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { 
-  ArrowLeft, 
-  Users, 
-  Share2, 
-  MoreHorizontal,
-  ZoomIn,
-  ZoomOut,
-  MousePointer,
-  Square,
-  Circle,
-  Type,
-  Pen,
-  Minus,
-  MessageSquare,
-  StickyNote,
-  Upload,
-  Undo,
-  Redo,
-  Play,
-  MessageCircle,
-  Monitor,
-  Crown,
-  Hand,
-  Triangle,
-  ArrowRight,
-  Image as ImageIcon,
-  Grid3x3,
-  Sparkles,
-  Move3D,
-  Lightbulb,
-  Shapes,
-  Palette,
-  FileImage,
-  Plus
+  ArrowLeft, Users, Share2, MoreHorizontal, ZoomIn, ZoomOut, MousePointer,
+  Square, Circle, Type, Pen, Minus, MessageSquare, StickyNote, Upload, 
+  Undo, Redo, Play, MessageCircle, Monitor, Crown, Hand, Triangle, ArrowRight, 
+  Image as ImageIcon, Grid3x3, Sparkles, Move3D, Lightbulb, Shapes, Palette, 
+  FileImage, Plus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { getCurrentUser, User } from '@/lib/auth';
-import { Board, boardStorage } from '@/lib/boards';
+import { supabase } from '@/lib/supabaseClient';
 import GridCanvas from '@/components/canvas/grid-canvas';
 import CanvasElement from '@/components/canvas/canvas-element';
+import { v4 as uuidv4 } from 'uuid';
+import { addCollaborator } from '@/lib/boards';
+
 
 interface CanvasElementData {
   id: string;
@@ -59,13 +34,22 @@ interface CanvasElementData {
   points?: { x: number; y: number }[];
 }
 
+function getColorFromId(id: string) {
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+  let sum = 0;
+  for (let i = 0; i < id.length; i++) {
+    sum += id.charCodeAt(i);
+  }
+  return colors[sum % colors.length];
+}
+
 export default function BoardPage() {
   const router = useRouter();
   const params = useParams();
   const boardId = params.id as string;
-  
+
   const [user, setUser] = useState<User | null>(null);
-  const [board, setBoard] = useState<Board | null>(null);
+  const [board, setBoard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTool, setSelectedTool] = useState('select');
   const [zoomLevel, setZoomLevel] = useState(100);
@@ -73,79 +57,188 @@ export default function BoardPage() {
   const [selectedElement, setSelectedElement] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
+  const [presenceUsers, setPresenceUsers] = useState<{
+    id: string;
+    name: string;
+    x: number;
+    y: number;
+    color: string;
+  }[]>([]);
+  const [newCollaboratorId, setNewCollaboratorId] = useState("");
+
+  const presenceRef = useRef({ id: uuidv4(), x: 0, y: 0 });
+  const channelRef = useRef<any>(null);
+
+const saveElementUpdate = async (element: CanvasElementData) => {
+  const { error } = await supabase
+    .from('board_elements')
+    .update({
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+      color: element.color,
+      stroke_width: element.strokeWidth,
+      content: element.content,
+      points: element.points ? JSON.stringify(element.points) : null
+    })
+    .eq('id', element.id);
+
+  if (error) {
+    console.error(`Error saving element ${element.id}:`, error);
+  }
+};
+
+const loadElements = async () => {
+  const { data, error } = await supabase
+    .from('board_elements')
+    .select('*')
+    .eq('board_id', boardId);
+
+  if (error) {
+    console.error('Error loading elements:', error);
+    return;
+  }
+
+  const loadedElements = (data || []).map((el) => ({
+    id: el.id,
+    type: el.type,
+    x: el.x,
+    y: el.y,
+    width: el.width ?? 100, // fallback if width is missing
+    height: el.height ?? 100, // fallback if height is missing
+    content: el.content ?? '',
+    color: el.color ?? '#000000',
+    strokeWidth: el.stroke_width ?? 1,
+    points: el.points ? JSON.parse(el.points) : undefined
+  }));
+
+  setElements(loadedElements);
+};
+
+
+  useEffect(() => {
+    const loadUserAndBoard = async () => {
+      const currentUser = await getCurrentUser();
+      if (!currentUser) {
+        router.push('/login');
+        return;
+      }
+      setUser(currentUser);
+      const { data, error } = await supabase
+        .from('boards')
+        .select('*')
+        .eq('id', boardId)
+        .single();
+
+      if (error || !data) {
+        console.error('Error loading board:', error);
+        router.push('/dashboard');
+        return;
+      }
+
+      setBoard(data);
+await loadElements();  // 👈 load elements *after* board data is ready
+setLoading(false);
+    };
+
+    loadUserAndBoard();
+  }, [router, boardId]);
 
 useEffect(() => {
-  const loadUser = async () => {
-    const currentUser = await getCurrentUser();
-    if (!currentUser) {
-      router.push('/login');
-      return;
-    }
-    setUser(currentUser);
+  const channel = supabase
+    .channel(`realtime:board_elements:${boardId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_elements', filter: `board_id=eq.${boardId}` }, payload => {
+      const { eventType, new: newEl, old: oldEl } = payload;
 
-    const boards = boardStorage.getBoards();
-    const foundBoard = boards.find(b => b.id === boardId);
+      setElements(prev => {
+        switch (eventType) {
+          case 'INSERT':
+            return [...prev, {
+              id: newEl.id,
+              type: newEl.type,
+              x: newEl.x,
+              y: newEl.y,
+              width: newEl.width,
+              height: newEl.height,
+              content: newEl.content,
+              color: newEl.color,
+              strokeWidth: newEl.stroke_width,
+              points: newEl.points ? JSON.parse(newEl.points) : undefined
+            }];
+          case 'UPDATE':
+            return prev.map(el => el.id === newEl.id ? {
+              ...el,
+              x: newEl.x,
+              y: newEl.y,
+              width: newEl.width,
+              height: newEl.height,
+              content: newEl.content,
+              color: newEl.color,
+              strokeWidth: newEl.stroke_width,
+              points: newEl.points ? JSON.parse(newEl.points) : undefined
+            } : el);
+          case 'DELETE':
+            return prev.filter(el => el.id !== oldEl.id);
+          default:
+            return prev;
+        }
+      });
+    })
+    .subscribe();
 
-    if (!foundBoard) {
-      router.push('/dashboard');
-      return;
-    }
-
-    setBoard(foundBoard);
-    setLoading(false);
+  return () => {
+    channel.unsubscribe();
   };
+}, [boardId]);
 
-  loadUser();
-}, [router, boardId]);
-
-  const handleCanvasClick = useCallback((e: React.MouseEvent) => {
-    if (selectedTool === 'select' || selectedTool === 'hand') return;
-
+  const handleMouseMove = (e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const elementDefaults = {
-      rectangle: { width: 120, height: 80, color: '#3b82f6' },
-      circle: { width: 100, height: 100, color: '#10b981' },
-      frame: { width: 200, height: 150, color: '#6366f1' },
-      text: { width: undefined, height: undefined, content: 'Type here...' },
-      sticky: { width: 120, height: 120, color: '#fef08a', content: '' },
-      line: { width: 100, height: 2, color: '#374151' },
-      arrow: { width: 100, height: 2, color: '#374151' }
-    };
+    presenceRef.current.x = x;
+    presenceRef.current.y = y;
 
-    const defaults = elementDefaults[selectedTool as keyof typeof elementDefaults] || {};
+    channelRef.current?.track({
+      ...presenceRef.current,
+      name: user?.name || 'Guest',
+      color: getColorFromId(presenceRef.current.id)
+    });
+  };
 
-    const newElement: CanvasElementData = {
-      id: Math.random().toString(36).substr(2, 9),
-      type: selectedTool as any,
-      x: x - (defaults.width || 50) / 2,
-      y: y - (defaults.height || 50) / 2,
-      ...defaults
-    };
-
-    setElements(prev => [...prev, newElement]);
-    setSelectedElement(newElement.id);
-    setSelectedTool('select');
-  }, [selectedTool]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (selectedTool === 'pen') {
-      setIsDrawing(true);
-      const rect = e.currentTarget.getBoundingClientRect();
-      const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      setCurrentPath([point]);
+  const handleAddCollaborator = async (userId: string) => {
+    const { data, error } = await supabase.from('board_collaborators').insert([
+      { board_id: boardId, user_id: userId, role: 'editor' }
+    ]);
+    if (error) {
+      console.error('Error adding collaborator:', error);
+      alert('Failed to add collaborator');
+    } else {
+      alert('Collaborator added!');
     }
-  }, [selectedTool]);
+  };
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isDrawing && selectedTool === 'pen') {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      setCurrentPath(prev => [...prev, point]);
-    }
-  }, [isDrawing, selectedTool]);
+const saveElement = async (element: CanvasElementData) => {
+  const { error } = await supabase.from('board_elements').insert({
+    id: element.id,
+    board_id: boardId,
+    type: element.type,
+    x: element.x,
+    y: element.y,
+    width: element.width,
+    height: element.height,
+    content: element.content,
+    color: element.color,
+    stroke_width: element.strokeWidth,
+    points: element.points ? JSON.stringify(element.points) : null
+  });
+
+  if (error) {
+    console.error(`Error inserting element ${element.id}:`, error);
+  }
+};
+
 
   const handleMouseUp = useCallback(() => {
     if (isDrawing && currentPath.length > 1) {
@@ -159,14 +252,66 @@ useEffect(() => {
         strokeWidth: 2
       };
       setElements(prev => [...prev, newElement]);
+      saveElement(newElement);
     }
     setIsDrawing(false);
     setCurrentPath([]);
   }, [isDrawing, currentPath]);
 
-  const handleElementUpdate = useCallback((id: string, updates: Partial<CanvasElementData>) => {
-    setElements(prev => prev.map(el => el.id === id ? { ...el, ...updates } : el));
-  }, []);
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (selectedTool === 'pen') {
+      setIsDrawing(true);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      setCurrentPath([point]);
+    }
+  }, [selectedTool]);
+
+  const handleCanvasClick = useCallback((e: React.MouseEvent) => {
+    if (selectedTool === 'select' || selectedTool === 'hand') return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+const elementDefaults: Record<string, Partial<CanvasElementData>> = {
+  rectangle: { width: 100, height: 60, color: '#f87171' },
+  circle: { width: 80, height: 80, color: '#60a5fa' },
+  text: { content: 'New text', width: 100, height: 30, color: '#000000' },
+  sticky: { content: 'Sticky note', width: 120, height: 120, color: '#facc15' },
+  frame: { width: 200, height: 150, color: '#9ca3af' },
+  line: { strokeWidth: 2, color: '#374151' },
+  arrow: { strokeWidth: 2, color: '#374151' },
+  pen: { strokeWidth: 2, color: '#374151' }
+};
+    const defaults = elementDefaults[selectedTool as keyof typeof elementDefaults] || {};
+
+    const newElement: CanvasElementData = {
+      id: Math.random().toString(36).substr(2, 9),
+      type: selectedTool as any,
+      x: x - (defaults.width || 50) / 2,
+      y: y - (defaults.height || 50) / 2,
+      ...defaults
+    };
+
+    setElements(prev => [...prev, newElement]);
+    setSelectedElement(newElement.id);
+    setSelectedTool('select');
+    saveElement(newElement);
+  }, [selectedTool]);
+
+const handleElementUpdate = useCallback((id: string, updates: Partial<CanvasElementData>) => {
+  setElements(prev =>
+    prev.map(el => el.id === id ? { ...el, ...updates } : el)
+  );
+
+  // Immediately push the update
+  const updatedElement = elements.find(el => el.id === id);
+  if (updatedElement) {
+    saveElementUpdate({ ...updatedElement, ...updates });
+  }
+}, [elements]);
+
 
   const handleElementSelect = useCallback((id: string) => {
     setSelectedElement(id);
@@ -323,17 +468,15 @@ useEffect(() => {
           </Button>
           
           <div className="flex items-center space-x-2">
-            <div className="flex -space-x-1">
-              {['A', 'B', 'C'].map((letter, i) => (
-                <Avatar key={i} className="w-8 h-8 border-2 border-white">
-                  <AvatarFallback className={`text-white text-xs ${
-                    i === 0 ? 'bg-blue-500' : i === 1 ? 'bg-green-500' : 'bg-purple-500'
-                  }`}>
-                    {letter}
-                  </AvatarFallback>
-                </Avatar>
-              ))}
-            </div>
+            <div className="flex items-center -space-x-1">
+  {presenceUsers.map(u => (
+    <Avatar key={u.id} className="w-6 h-6 border border-white">
+      <AvatarFallback style={{ backgroundColor: u.color }}>
+        {u.name.charAt(0).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  ))}
+</div>
             <Button variant="ghost" size="sm" className="text-slate-600">
               <Users className="h-4 w-4" />
             </Button>
@@ -356,6 +499,23 @@ useEffect(() => {
             <Share2 className="h-4 w-4 mr-2" />
             Share
           </Button>
+          <Button
+  size="sm"
+  className="bg-green-600 hover:bg-green-700 text-white"
+  onClick={async () => {
+    const userIdToAdd = prompt("Enter the User ID to add as collaborator:");
+    if (userIdToAdd) {
+      const result = await addCollaborator(boardId, userIdToAdd, 'editor');
+      if (result) {
+        alert('Collaborator added successfully!');
+      } else {
+        alert('Failed to add collaborator.');
+      }
+    }
+  }}
+>
+  + Collaborator
+</Button>
         </div>
       </header>
 
@@ -406,46 +566,66 @@ useEffect(() => {
         </div>
 
         {/* Main Canvas Area */}
-        <div className="flex-1 relative">
-          <GridCanvas 
-            zoom={zoomLevel} 
-            onZoomChange={setZoomLevel}
-            isPanMode={selectedTool === 'hand'}
-          >
-            <div 
-              className="w-full h-full relative"
-              onClick={handleCanvasClick}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              style={{ cursor: selectedTool === 'pen' ? 'crosshair' : 'default' }}
-            >
-              {elements.map(element => (
-                <CanvasElement
-                  key={element.id}
-                  {...element}
-                  onUpdate={handleElementUpdate}
-                  onSelect={handleElementSelect}
-                  isSelected={selectedElement === element.id}
-                  zoom={zoomLevel}
-                />
-              ))}
-              
-              {/* Current drawing path */}
-              {isDrawing && currentPath.length > 1 && (
-                <svg className="absolute inset-0 pointer-events-none">
-                  <path
-                    d={`M ${currentPath.map(p => `${p.x},${p.y}`).join(' L ')}`}
-                    stroke="#374151"
-                    strokeWidth="2"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              )}
-            </div>
-          </GridCanvas>
+        <div className="flex-1 relative" onMouseMove={handleMouseMove}>
+<GridCanvas 
+  zoom={zoomLevel} 
+  onZoomChange={setZoomLevel}
+  isPanMode={selectedTool === 'hand'}
+>
+  <div 
+    className="w-full h-full relative"
+    onClick={handleCanvasClick}
+    onMouseDown={handleMouseDown}
+    onMouseMove={handleMouseMove}
+    onMouseUp={handleMouseUp}
+    style={{ cursor: selectedTool === 'pen' ? 'crosshair' : 'default' }}
+  >
+    {elements.map(element => (
+      <CanvasElement
+        key={element.id}
+        {...element}
+        onUpdate={handleElementUpdate}
+        onSelect={handleElementSelect}
+        isSelected={selectedElement === element.id}
+        zoom={zoomLevel}
+      />
+    ))}
+
+    {/* Current drawing path */}
+    {isDrawing && currentPath.length > 1 && (
+      <svg className="absolute inset-0 pointer-events-none">
+        <path
+          d={`M ${currentPath.map(p => `${p.x},${p.y}`).join(' L ')}`}
+          stroke="#374151"
+          strokeWidth="2"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )}
+
+    {/* Presence cursors */}
+    {presenceUsers.map(user => (
+      <div
+        key={user.id}
+        className="absolute pointer-events-none"
+        style={{
+          left: user.x,
+          top: user.y,
+          transform: 'translate(-50%, -50%)'
+        }}
+      >
+        <div
+          className="w-3 h-3 rounded-full border border-white"
+          style={{ backgroundColor: user.color }}
+        ></div>
+        <div className="text-xs text-slate-600">{user.name}</div>
+      </div>
+    ))}
+  </div>
+</GridCanvas>
+
 
           {/* Zoom Controls */}
           <div className="absolute bottom-6 right-6 flex items-center space-x-2 bg-white rounded-lg border border-slate-200 shadow-sm px-3 py-2">

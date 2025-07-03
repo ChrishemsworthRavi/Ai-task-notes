@@ -7,6 +7,7 @@ import TemplateCard from './template-card';
 import { boardTemplates, BoardTemplate, boardStorage } from '@/lib/boards';
 import { User } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
+import TemplateCardWithDialog from './TemplateCardWithDialog';
 
 interface TemplatesSectionProps {
   user: User;
@@ -30,16 +31,16 @@ export default function TemplatesSection({ user, onBoardCreate }: TemplatesSecti
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {boardTemplates.map((template, index) => (
-            <TemplateCard
-              key={template.id}
-              template={template}
-              onClick={() => handleTemplateClick(template)}
-              index={index}
-            />
-          ))}
-        </div>
+       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+  {boardTemplates.map((template, index) => (
+    <TemplateCardWithDialog
+      key={template.type}
+      template={template}
+      index={index}
+      onBoardCreated={onBoardCreate}
+    />
+  ))}
+</div>
       </motion.div>
 
       <motion.div
