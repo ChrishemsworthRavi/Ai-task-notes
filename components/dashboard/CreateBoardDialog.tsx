@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { getCurrentUser, User } from "@/lib/auth";
 
 interface CreateBoardDialogProps {
   open: boolean;
@@ -28,36 +29,51 @@ export default function CreateBoardDialog({
 }: CreateBoardDialogProps) {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    const loadUser = async () => {
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
+    };
+    loadUser();
+  }, []);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
-    setLoading(true);
-    const { data, error } = await supabase
-  .from("boards")
-  .insert([{ name, type: templateType }])
-  .select("id")
-  .single();
-
-if (data?.id) {
-  router.push(`/board/${data.id}`);
-}
-
-    setLoading(false);
-
-    if (error) {
-      console.error("Failed to create board:", error);
-      alert("Error creating board.");
+    if (!user) {
+      alert("You must be logged in to create a board");
       return;
     }
 
-    setName("");
-    onOpenChange(false);
-    onCreated();
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("boards")
+      .insert([
+        {
+          name,
+          type: templateType,
+          owner_id: user.id,
+        },
+      ])
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error("Error creating board:", error);
+      alert("Failed to create board");
+      setLoading(false);
+      return;
+    }
 
     if (data?.id) {
+      onCreated();
       router.push(`/board/${data.id}`);
     }
+
+    setLoading(false);
   };
 
   return (
