@@ -304,17 +304,20 @@ const elementDefaults: Record<string, Partial<CanvasElementData>> = {
     saveElement(newElement);
   }, [selectedTool]);
 
-const handleElementUpdate = useCallback((id: string, updates: Partial<CanvasElementData>) => {
-  setElements(prev =>
-    prev.map(el => el.id === id ? { ...el, ...updates } : el)
-  );
+const handleElementUpdate = useCallback(
+  (id: string, updates: Partial<CanvasElementData>) => {
+    setElements((prev) =>
+      prev.map((el) => (el.id === id ? { ...el, ...updates } : el))
+    );
 
-  // Immediately push the update
-  const updatedElement = elements.find(el => el.id === id);
-  if (updatedElement) {
-    saveElementUpdate({ ...updatedElement, ...updates });
-  }
-}, [elements]);
+    const updated = elements.find((el) => el.id === id);
+    if (updated) {
+      saveElementUpdate({ ...updated, ...updates });
+    }
+  },
+  [elements]
+);
+
 
 
   const handleElementSelect = useCallback((id: string) => {
