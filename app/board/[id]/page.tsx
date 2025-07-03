@@ -82,10 +82,12 @@ const saveElementUpdate = async (element: CanvasElementData) => {
       content: element.content,
       points: element.points ? JSON.stringify(element.points) : null
     })
-    .eq('id', element.id);
+    .eq('id', element.id)
+    .eq('owner_id', user?.id);  // 👈 Add this if your RLS requires it
 
   if (error) {
     console.error(`Error saving element ${element.id}:`, error);
+    alert(`Update failed: ${error.message}`);
   }
 };
 
@@ -223,6 +225,7 @@ const saveElement = async (element: CanvasElementData) => {
   const { error } = await supabase.from('board_elements').insert({
     id: element.id,
     board_id: boardId,
+    owner_id: user?.id,  // 👈 Ensure owner_id is provided if RLS requires it
     type: element.type,
     x: element.x,
     y: element.y,
@@ -236,6 +239,7 @@ const saveElement = async (element: CanvasElementData) => {
 
   if (error) {
     console.error(`Error inserting element ${element.id}:`, error);
+    alert(`Insert failed: ${error.message}`);
   }
 };
 
