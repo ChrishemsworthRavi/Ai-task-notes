@@ -291,7 +291,7 @@ const elementDefaults: Record<string, Partial<CanvasElementData>> = {
     const defaults = elementDefaults[selectedTool as keyof typeof elementDefaults] || {};
 
     const newElement: CanvasElementData = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: uuidv4(),
       type: selectedTool as any,
       x: x - (defaults.width || 50) / 2,
       y: y - (defaults.height || 50) / 2,
