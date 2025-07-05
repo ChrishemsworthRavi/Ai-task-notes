@@ -42,23 +42,61 @@ export default function BoardsTable({ currentUser }: BoardsTableProps) {
 
   
 const fetchBoards = async () => {
-  const { data, error } = await supabase
+  const { data: ownedBoards, error: ownedError } = await supabase
     .from("boards")
     .select("*")
-    .order("updated_at", { ascending: false });
+    .eq("owner_id", currentUser);
 
-  if (error) {
-    console.error("Error fetching boards:", error);
-    return;
+  if (ownedError) console.error("Error fetching owned boards:", ownedError);
+
+  const { data: collabIdsData, error: collabIdsError } = await supabase
+    .from("board_collaborators")
+    .select("board_id")
+    .eq("user_id", currentUser);
+
+  if (collabIdsError) console.error("Error fetching collaborator IDs:", collabIdsError);
+
+  let collabBoards: any[] = [];
+  if (collabIdsData?.length) {
+    const boardIds = collabIdsData.map((c) => c.board_id);
+
+    const { data: collabBoardsData, error: collabBoardsError } = await supabase
+      .from("boards")
+      .select("*")
+      .in("id", boardIds);
+
+    if (collabBoardsError) {
+      console.error("Error fetching collaborator boards:", collabBoardsError);
+    } else {
+      collabBoards = collabBoardsData || [];
+    }
   }
 
-  setBoards((data || []).map(b => ({
-    ...b,
-    ownerId: b.owner_id,
-    createdAt: new Date(b.created_at),
-    updatedAt: new Date(b.updated_at),
-  })));
+  const merged = [...(ownedBoards || []), ...collabBoards];
+  const uniqueBoards = Array.from(new Map(merged.map((b) => [b.id, b])).values());
+
+  // Now for each board, fetch collaborators
+  const boardsWithCollaborators = await Promise.all(
+    uniqueBoards.map(async (board) => {
+      const { data: collaboratorsData } = await supabase
+        .from("board_collaborators")
+        .select("user_id") // you can join user profile table if you have one
+        .eq("board_id", board.id);
+
+      return {
+        ...board,
+        ownerId: board.owner_id,
+        collaborators: collaboratorsData || [],
+        createdAt: board.created_at ? new Date(board.created_at) : new Date(0),
+        updatedAt: board.updated_at ? new Date(board.updated_at) : new Date(0),
+      };
+    })
+  );
+
+  setBoards(boardsWithCollaborators);
 };
+
+
 
 useEffect(() => {
   fetchBoards();
@@ -132,18 +170,18 @@ const sortedAndFilteredBoards = boards
     if (ownedBy === 'me' && board.ownerId !== currentUser) return false;
     return true;
   })
-  .sort((a, b) => {
+.sort((a, b) => {
   switch (sortBy) {
     case 'last-opened':
-      return b.updatedAt.getTime() - a.updatedAt.getTime();
+      return (b.updatedAt?.getTime() || 0) - (a.updatedAt?.getTime() || 0);
     case 'name':
       return a.name.localeCompare(b.name);
     case 'created':
-      return b.createdAt.getTime() - a.createdAt.getTime();
+      return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
     default:
       return 0;
   }
-})
+});
 
   if (boards.length === 0) {
     return (
@@ -369,6 +407,3 @@ const sortedAndFilteredBoards = boards
   );
 }
 
-function onBoardsChange() {
-  throw new Error('Function not implemented.');
-}

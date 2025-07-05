@@ -19,6 +19,15 @@ import GridCanvas from '@/components/canvas/grid-canvas';
 import CanvasElement from '@/components/canvas/canvas-element';
 import { v4 as uuidv4 } from 'uuid';
 import { addCollaborator } from '@/lib/boards';
+import { useBoardPresence } from '@/lib/useBoardPresence';
+import { useBoardElements } from '@/lib/useBoardElements';
+import CollaboratorsPanel from '@/components/CollaboratorsPanel';
+import { useCursorSharing } from '@/hooks/useCursorSharing';
+import CursorLayer from '@/components/dashboard/CursorOverlay';
+import { Dialog, DialogContent } from '@radix-ui/react-dialog';
+import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
 
 
 interface CanvasElementData {
@@ -48,7 +57,7 @@ export default function BoardPage() {
   const params = useParams();
   const boardId = params.id as string;
 
-  const [user, setUser] = useState<User | null>(null);
+
   const [board, setBoard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTool, setSelectedTool] = useState('select');
@@ -57,19 +66,26 @@ export default function BoardPage() {
   const [selectedElement, setSelectedElement] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
-  const [presenceUsers, setPresenceUsers] = useState<{
-    id: string;
-    name: string;
-    x: number;
-    y: number;
-    color: string;
-  }[]>([]);
   const [newCollaboratorId, setNewCollaboratorId] = useState("");
+    const [user, setUser] = useState<User | null>(null);
+const [cursors, setCursors] = useState<Record<string, { x: number; y: number; name: string; color: string }>>({});
+const userName = user?.email || 'Anonymous';  
+const userColor = '#'+Math.floor(Math.random()*16777215).toString(16); // random color
 
   const presenceRef = useRef({ id: uuidv4(), x: 0, y: 0 });
   const channelRef = useRef<any>(null);
 
+  const userId = 'user-' + Math.floor(Math.random() * 1000); // You can replace with real user id
+  const { presenceUsers, updateCursor } = useBoardPresence(boardId, userId);
+    const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState('');
+
+
+
+  if (!boardId) return <div>Loading...</div>;
 const saveElementUpdate = async (element: CanvasElementData) => {
+  console.log('Saving element update:', element);
+
   const { error } = await supabase
     .from('board_elements')
     .update({
@@ -82,12 +98,13 @@ const saveElementUpdate = async (element: CanvasElementData) => {
       content: element.content,
       points: element.points ? JSON.stringify(element.points) : null
     })
-    .eq('id', element.id)
-    .eq('owner_id', user?.id);  // 👈 Add this if your RLS requires it
+    .eq('id', element.id); // ✅ no extra filters
 
   if (error) {
     console.error(`Error saving element ${element.id}:`, error);
     alert(`Update failed: ${error.message}`);
+  } else {
+    console.log(`Element ${element.id} update saved.`);
   }
 };
 
@@ -119,33 +136,51 @@ const loadElements = async () => {
 };
 
 
-  useEffect(() => {
-    const loadUserAndBoard = async () => {
-      const currentUser = await getCurrentUser();
-      if (!currentUser) {
-        router.push('/login');
-        return;
-      }
-      setUser(currentUser);
-      const { data, error } = await supabase
-        .from('boards')
-        .select('*')
-        .eq('id', boardId)
-        .single();
+useEffect(() => {
+  const loadUserAndBoard = async () => {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      router.push('/login');
+      return;
+    }
+    setUser(currentUser);
 
-      if (error || !data) {
-        console.error('Error loading board:', error);
-        router.push('/dashboard');
-        return;
-      }
+    const { data: collabs, error: collabError } = await supabase
+      .from('board_collaborators')
+      .select('board_id')
+      .eq('user_id', currentUser.id);
 
-      setBoard(data);
-await loadElements();  // 👈 load elements *after* board data is ready
-setLoading(false);
-    };
+    if (collabError) {
+      console.error('Error checking collaborators:', collabError);
+      router.push('/dashboard');
+      return;
+    }
 
-    loadUserAndBoard();
-  }, [router, boardId]);
+    const collabBoardIds = collabs?.map(c => c.board_id) || [];
+
+    const { data: boardData, error: boardError } = await supabase
+      .from('boards')
+      .select('*')
+      .eq('id', boardId)
+      .maybeSingle();
+
+    if (
+      boardError || 
+      !boardData || 
+      (boardData.owner_id !== currentUser.id && !collabBoardIds.includes(boardId))
+    ) {
+      console.error('Error loading board or no access:', boardError);
+      router.push('/dashboard');
+      return;
+    }
+
+    setBoard(boardData);
+    await loadElements();
+    setLoading(false);
+  };
+
+  loadUserAndBoard();
+}, [router, boardId]);
 
 useEffect(() => {
   const channel = supabase
@@ -156,6 +191,7 @@ useEffect(() => {
       setElements(prev => {
         switch (eventType) {
           case 'INSERT':
+            if (prev.some(el => el.id === newEl.id)) return prev;
             return [...prev, {
               id: newEl.id,
               type: newEl.type,
@@ -190,36 +226,77 @@ useEffect(() => {
     .subscribe();
 
   return () => {
-    channel.unsubscribe();
+    supabase.removeChannel(channel);
   };
 }, [boardId]);
+
+const { sendCursor } = useCursorSharing(
+  boardId,
+  user?.id ?? '',
+  user?.email ?? '',
+  userColor,
+  (otherUserId, x, y, name, color) => {
+    setCursors(prev => ({
+      ...prev,
+      [otherUserId]: { x, y, name, color }
+    }));
+  }
+);
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-
-    presenceRef.current.x = x;
-    presenceRef.current.y = y;
-
-    channelRef.current?.track({
-      ...presenceRef.current,
-      name: user?.name || 'Guest',
-      color: getColorFromId(presenceRef.current.id)
-    });
+    sendCursor(x, y);
   };
 
-  const handleAddCollaborator = async (userId: string) => {
-    const { data, error } = await supabase.from('board_collaborators').insert([
-      { board_id: boardId, user_id: userId, role: 'editor' }
-    ]);
+  const handleAddCollaborator = async () => {
+    if (!email) {
+      toast.error('Please enter a Gmail address.');
+      return;
+    }
+
+    if (!email.toLowerCase().endsWith('@gmail.com')) {
+      toast.error('Please enter a valid Gmail address.');
+      return;
+    }
+
+const { data: userData, error } = await supabase
+  .from('profiles')   // replace 'users' with your actual table!
+  .select('id')
+  .eq('email', email)
+  .maybeSingle();
     if (error) {
-      console.error('Error adding collaborator:', error);
-      alert('Failed to add collaborator');
+      console.error('User lookup error:', error);
+      toast.error('Error looking up user.');
+      return;
+    }
+
+    if (!userData) {
+      toast.error('No user found with that Gmail address.');
+      return;
+    }
+
+    const { error: addError } = await supabase
+      .from('board_collaborators')
+      .insert({
+        board_id: boardId,
+        user_id: userData.id,
+        role: 'editor',
+      });
+
+    if (addError) {
+      console.error('Add collaborator error:', addError);
+      toast.error('Failed to add collaborator.');
     } else {
-      alert('Collaborator added!');
+      toast.success(`Collaborator ${email} added successfully!`);
+      setOpen(false);
+      setEmail('');
     }
   };
+
+
+
 
 const saveElement = async (element: CanvasElementData) => {
   const { error } = await supabase.from('board_elements').insert({
@@ -448,83 +525,86 @@ const handleElementUpdate = useCallback(
 
   return (
     <div className="h-screen bg-white flex flex-col">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-3">
-            <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center">
-              <span className="text-white text-xs font-bold">M</span>
-            </div>
-            <span className="font-bold text-lg text-slate-900">miro</span>
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <div className="w-4 h-4 text-blue-500">🚀</div>
-            <span className="font-medium text-slate-900">{board.name}</span>
-          </div>
-        </div>
+<header className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
+  <div className="flex items-center space-x-4">
+    <div className="flex items-center space-x-3">
+      <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center">
+        <span className="text-white text-xs font-bold">M</span>
+      </div>
+      <span className="font-bold text-lg text-slate-900">miro</span>
+    </div>
 
-        <div className="flex items-center space-x-3">
-          <Button variant="ghost" size="sm" className="text-slate-600">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-          
-          <Button variant="outline" size="sm" className="text-slate-700">
-            <Crown className="h-4 w-4 mr-2" />
-            Upgrade
-          </Button>
-          
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center -space-x-1">
-  {presenceUsers.map(u => (
-    <Avatar key={u.id} className="w-6 h-6 border border-white">
-      <AvatarFallback style={{ backgroundColor: u.color }}>
-        {u.name.charAt(0).toUpperCase()}
-      </AvatarFallback>
-    </Avatar>
-  ))}
-</div>
-            <Button variant="ghost" size="sm" className="text-slate-600">
-              <Users className="h-4 w-4" />
-            </Button>
-          </div>
-          
-          <Button variant="ghost" size="sm" className="text-slate-600">
-            <MessageCircle className="h-4 w-4" />
-          </Button>
-          
-          <Button variant="ghost" size="sm" className="text-slate-600">
-            <Monitor className="h-4 w-4" />
-          </Button>
-          
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
-            <Play className="h-4 w-4 mr-2" />
-            Present
-          </Button>
-          
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
-            <Share2 className="h-4 w-4 mr-2" />
-            Share
-          </Button>
-          <Button
+    <div className="flex items-center space-x-2">
+      <div className="w-4 h-4 text-blue-500">🚀</div>
+      <span className="font-medium text-slate-900">{board.name}</span>
+    </div>
+  </div>
+
+  <div className="flex items-center space-x-3">
+    <Button variant="ghost" size="sm" className="text-slate-600">
+      <MoreHorizontal className="h-4 w-4" />
+    </Button>
+
+    <Button variant="outline" size="sm" className="text-slate-700">
+      <Crown className="h-4 w-4 mr-2" />
+      Upgrade
+    </Button>
+
+    <div className="flex items-center space-x-2">
+      <CollaboratorsPanel collaborators={presenceUsers} />
+      <Button variant="ghost" size="sm" className="text-slate-600">
+        <Users className="h-4 w-4" />
+      </Button>
+    </div>
+
+    <Button variant="ghost" size="sm" className="text-slate-600">
+      <MessageCircle className="h-4 w-4" />
+    </Button>
+
+    <Button variant="ghost" size="sm" className="text-slate-600">
+      <Monitor className="h-4 w-4" />
+    </Button>
+
+    <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+      <Play className="h-4 w-4 mr-2" />
+      Present
+    </Button>
+
+    <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+      <Share2 className="h-4 w-4 mr-2" />
+      Share
+    </Button>
+
+ <Button
   size="sm"
   className="bg-green-600 hover:bg-green-700 text-white"
-  onClick={async () => {
-    const userIdToAdd = prompt("Enter the User ID to add as collaborator:");
-    if (userIdToAdd) {
-      const result = await addCollaborator(boardId, userIdToAdd, 'editor');
-      if (result) {
-        alert('Collaborator added successfully!');
-      } else {
-        alert('Failed to add collaborator.');
-      }
-    }
-  }}
+  onClick={() => setOpen(true)}
 >
   + Collaborator
 </Button>
-        </div>
-      </header>
+<Dialog open={open} onOpenChange={setOpen}>
+  <DialogContent>
+    <DialogHeader>
+      <DialogTitle>Add Collaborator</DialogTitle>
+      <DialogDescription>
+        Enter the Gmail address of the collaborator you want to add.
+      </DialogDescription>
+    </DialogHeader>
+
+    <Input
+      placeholder="Enter Gmail address"
+      value={email}
+      onChange={(e) => setEmail(e.target.value)}
+    />
+
+    <Button onClick={handleAddCollaborator}>
+      Add
+    </Button>
+  </DialogContent>
+</Dialog>
+  </div>
+</header>
+
 
       <div className="flex-1 flex">
         {/* Left Toolbar */}
@@ -613,24 +693,25 @@ const handleElementUpdate = useCallback(
     )}
 
     {/* Presence cursors */}
-    {presenceUsers.map(user => (
-      <div
-        key={user.id}
-        className="absolute pointer-events-none"
-        style={{
-          left: user.x,
-          top: user.y,
-          transform: 'translate(-50%, -50%)'
-        }}
-      >
-        <div
-          className="w-3 h-3 rounded-full border border-white"
-          style={{ backgroundColor: user.color }}
-        ></div>
-        <div className="text-xs text-slate-600">{user.name}</div>
-      </div>
-    ))}
+{presenceUsers.map(user => (
+  <div
+    key={user.id}
+    className="absolute pointer-events-none"
+    style={{
+      left: user.x,
+      top: user.y,
+      transform: 'translate(-50%, -50%)'
+    }}
+  >
+    <div
+      className="w-3 h-3 rounded-full border border-white"
+      style={{ backgroundColor: user.color }}
+    ></div>
+    <div className="text-xs text-slate-600">{user.name}</div>
   </div>
+))}
+  </div>
+  <CursorLayer boardId={boardId} userId={userId} />
 </GridCanvas>
 
 
@@ -693,3 +774,7 @@ const handleElementUpdate = useCallback(
     </div>
   );
 }
+function onAdd(email: string) {
+  throw new Error('Function not implemented.');
+}
+
