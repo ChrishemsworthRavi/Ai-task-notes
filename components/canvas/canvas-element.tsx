@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 
 interface CanvasElementProps {
@@ -59,19 +59,19 @@ export default function CanvasElement({
     }
   };
 
-  const handleMouseMove = (e: MouseEvent) => {
+  const handleMouseMove = useCallback((e: MouseEvent) => {
     if (isDragging && onUpdate) {
       onUpdate(id, {
         x: e.clientX - dragOffset.x,
         y: e.clientY - dragOffset.y
       });
     }
-  };
+  }, [isDragging, onUpdate, id, dragOffset]);
 
-  const handleMouseUp = () => {
+  const handleMouseUp = useCallback(() => {
     setIsDragging(false);
     setIsResizing(false);
-  };
+  }, []);
 
   const handleResizeMouseDown = (e: React.MouseEvent, direction: string) => {
     e.stopPropagation();
@@ -131,15 +131,22 @@ export default function CanvasElement({
   };
 
   useEffect(() => {
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
-    }
-  }, [isDragging, dragOffset]);
+    const handleMouseMoveIfDragging = (e: MouseEvent) => {
+      if (isDragging) handleMouseMove(e);
+    };
+
+    const handleMouseUpIfDragging = (e: MouseEvent) => {
+      if (isDragging) handleMouseUp();
+    };
+
+    document.addEventListener('mousemove', handleMouseMoveIfDragging);
+    document.addEventListener('mouseup', handleMouseUpIfDragging);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMoveIfDragging);
+      document.removeEventListener('mouseup', handleMouseUpIfDragging);
+    };
+  }, [isDragging, handleMouseMove, handleMouseUp]);
 
   const baseClasses = `absolute transition-all duration-75 ${
     isSelected ? 'ring-2 ring-blue-500 ring-offset-2' : ''
