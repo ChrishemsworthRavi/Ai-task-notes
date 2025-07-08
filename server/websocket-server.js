@@ -1,69 +1,82 @@
+// server.js
+const next = require('next');
+const http = require('http');
 const WebSocket = require('ws');
+const { parse } = require('url');
 
-const PORT = 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const dev = process.env.NODE_ENV !== 'production';
+const app = next({ dev });
+const handle = app.getRequestHandler();
 
-console.log(`WebSocket server running on ws://localhost:${PORT}`);
+const PORT = process.env.PORT || 3000;
 
-// Ping-pong health check interval (every 30 seconds)
-const interval = setInterval(() => {
-  wss.clients.forEach(client => {
-    if (client.isAlive === false) {
-      console.log('Terminating dead connection');
-      return client.terminate();
-    }
-
-    client.isAlive = false;
-    client.ping();  // Ping the client
-  });
-}, 30000);
-
-wss.on('connection', (ws) => {
-  console.log('New client connected');
-
-  // Mark the client alive on connection
-  ws.isAlive = true;
-
-  // Listen for pong responses (client is alive)
-  ws.on('pong', () => {
-    ws.isAlive = true;
+app.prepare().then(() => {
+  const server = http.createServer((req, res) => {
+    const parsedUrl = parse(req.url, true);
+    handle(req, res, parsedUrl);
   });
 
-  // Listen for messages
-  ws.on('message', async (message) => {
-    try {
-      let textData;
+  const wss = new WebSocket.Server({ server });
 
-      // Handle Blob / Buffer
-      if (message instanceof Buffer || message instanceof ArrayBuffer) {
-        textData = message.toString();
-      } else if (message instanceof Blob) {
-        textData = await message.text();
-      } else {
-        textData = message.toString();
+  console.log(`WebSocket server running on ws://localhost:${PORT}`);
+
+  const interval = setInterval(() => {
+    wss.clients.forEach(client => {
+      if (client.isAlive === false) {
+        console.log('Terminating dead connection');
+        return client.terminate();
       }
 
-      const parsed = JSON.parse(textData);
-      console.log('Parsed message:', parsed);
+      client.isAlive = false;
+      client.ping();
+    });
+  }, 30000);
 
-      // Broadcast to all other clients
-      wss.clients.forEach(client => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(parsed));
+  wss.on('connection', (ws) => {
+    console.log('New client connected');
+
+    ws.isAlive = true;
+
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
+
+    ws.on('message', async (message) => {
+      try {
+        let textData;
+
+        if (message instanceof Buffer || message instanceof ArrayBuffer) {
+          textData = message.toString();
+        } else if (message instanceof Blob) {
+          textData = await message.text();
+        } else {
+          textData = message.toString();
         }
-      });
-    } catch (err) {
-      console.error('Failed to parse message', err);
-      ws.send(JSON.stringify({ error: 'Invalid JSON format' }));
-    }
+
+        const parsed = JSON.parse(textData);
+        console.log('Parsed message:', parsed);
+
+        wss.clients.forEach(client => {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(parsed));
+          }
+        });
+      } catch (err) {
+        console.error('Failed to parse message', err);
+        ws.send(JSON.stringify({ error: 'Invalid JSON format' }));
+      }
+    });
+
+    ws.on('close', () => {
+      console.log('Client disconnected');
+    });
   });
 
-  ws.on('close', () => {
-    console.log('Client disconnected');
+  wss.on('close', () => {
+    clearInterval(interval);
   });
-});
 
-// Cleanup interval on server close
-wss.on('close', () => {
-  clearInterval(interval);
+  server.listen(PORT, () => {
+    console.log(`> Ready on http://localhost:${PORT}`);
+  });
 });
