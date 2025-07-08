@@ -1,4 +1,3 @@
-// server.js
 const next = require('next');
 const http = require('http');
 const WebSocket = require('ws');
@@ -26,7 +25,6 @@ app.prepare().then(() => {
         console.log('Terminating dead connection');
         return client.terminate();
       }
-
       client.isAlive = false;
       client.ping();
     });
@@ -34,7 +32,6 @@ app.prepare().then(() => {
 
   wss.on('connection', (ws) => {
     console.log('New client connected');
-
     ws.isAlive = true;
 
     ws.on('pong', () => {
@@ -44,7 +41,6 @@ app.prepare().then(() => {
     ws.on('message', async (message) => {
       try {
         let textData;
-
         if (message instanceof Buffer || message instanceof ArrayBuffer) {
           textData = message.toString();
         } else if (message instanceof Blob) {

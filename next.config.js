@@ -6,15 +6,25 @@ const nextConfig = {
       ...config.experiments,
       topLevelAwait: true,
     };
+
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      bufferutil: false,
+      'utf-8-validate': false,
+      fs: false,
+    };
+
     config.externals.push({
-      sharp: "commonjs sharp",
-      canvas: "commonjs canvas",
+      sharp: 'commonjs sharp',
+      canvas: 'commonjs canvas',
     });
+
     config.plugins.push(
       new webpack.ProvidePlugin({
-        Buffer: ["buffer", "Buffer"],
+        Buffer: ['buffer', 'Buffer'],
       })
     );
+
     return config;
   },
 };
