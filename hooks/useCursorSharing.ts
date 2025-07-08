@@ -16,7 +16,7 @@ export function useCursorSharing(
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const socket = new WebSocket('ws://localhost:8080');
+    const socket = new WebSocket('ws://localhost:3000');
     socketRef.current = socket;
 
     socket.onopen = () => {
