@@ -6,8 +6,7 @@
   "dev": "next dev",
   "build": "next build",
   "start": "node src/wsServer.js"
-  "dev": "node server/websocket-server.js"
-},
+}
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
     "@next/swc-wasm-nodejs": "13.5.1",
