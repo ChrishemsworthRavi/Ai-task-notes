@@ -369,7 +369,7 @@ setElements(prev => {
     }
 
     const { data: userData, error } = await supabase
-      .from('profiles')   // replace 'users' with your actual table!
+      .from('users') // <-- change 'profiles' to 'users' if needed
       .select('id')
       .eq('email', email)
       .maybeSingle();
