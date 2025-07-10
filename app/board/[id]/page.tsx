@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/rules-of-hooks */
+
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from 'react';
@@ -245,113 +245,54 @@ setElements(prev => {
     sendCursor(x, y);
   }, [sendCursor]);
 
-const handleElementUpdate = useCallback((id: string, updates: Partial<CanvasElementData>) => {
-  setElements(prev => {
-    const updated = prev.map(el =>
-      el.id === id ? { ...el, ...updates } : el
-    );
-    const target = updated.find(el => el.id === id);
-    if (target) updateElement(target);
-    return updated;
-  });
-}, [updateElement]);
+  const handleElementUpdate = useCallback((id: string, updates: Partial<CanvasElementData>) => {
+    setElements(prev => {
+      const updated = prev.map(el =>
+        el.id === id ? { ...el, ...updates } : el
+      );
+      const target = updated.find(el => el.id === id);
+      if (target) updateElement(target);
+      return updated;
+    });
+  }, [updateElement]);
 
-  if (!boardId || loading || !user || !board) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"
-        />
-      </div>
-    );
-  }
+  const saveElement = useCallback(async (element: CanvasElementData) => {
+    const { error } = await supabase.from('board_elements').insert([{
+      board_id: boardId,
+      type: element.type,
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+      color: element.color,
+      stroke_width: element.strokeWidth,
+      content: element.content,
+      points: element.points ? JSON.stringify(element.points) : null
+    }]);
 
-  const handleAddCollaborator = async () => {
-    if (!email) {
-      toast.error('Please enter a Gmail address.');
-      return;
-    }
-
-    if (!email.toLowerCase().endsWith('@gmail.com')) {
-      toast.error('Please enter a valid Gmail address.');
-      return;
-    }
-
-const { data: userData, error } = await supabase
-  .from('profiles')   // replace 'users' with your actual table!
-  .select('id')
-  .eq('email', email)
-  .maybeSingle();
     if (error) {
-      console.error('User lookup error:', error);
-      toast.error('Error looking up user.');
-      return;
+      toast.error('Error saving element');
+      console.error('Save failed:', error);
     }
+  }, [boardId]);
 
-    if (!userData) {
-      toast.error('No user found with that Gmail address.');
-      return;
+  const handleMouseUp = useCallback(() => {
+    if (isDrawing && currentPath.length > 1) {
+      const newElement: CanvasElementData = {
+        id: Math.random().toString(36).substring(2, 11),
+        type: 'pen',
+        x: Math.min(...currentPath.map(p => p.x)),
+        y: Math.min(...currentPath.map(p => p.y)),
+        points: currentPath,
+        color: '#374151',
+        strokeWidth: 2
+      };
+      setElements(prev => [...prev, newElement]);
+      saveElement(newElement);
     }
-
-    const { error: addError } = await supabase
-      .from('board_collaborators')
-      .insert({
-        board_id: boardId,
-        user_id: userData.id,
-        role: 'editor',
-      });
-
-    if (addError) {
-      console.error('Add collaborator error:', addError);
-      toast.error('Failed to add collaborator.');
-    } else {
-      toast.success(`Collaborator ${email} added successfully!`);
-      setOpen(false);
-      setEmail('');
-    }
-  };
-
-// ✅ Move all hooks above conditional return
-
-const saveElement = useCallback(async (element: CanvasElementData) => {
-  const { error } = await supabase.from('board_elements').insert([{
-    board_id: boardId,
-    type: element.type,
-    x: element.x,
-    y: element.y,
-    width: element.width,
-    height: element.height,
-    color: element.color,
-    stroke_width: element.strokeWidth,
-    content: element.content,
-    points: element.points ? JSON.stringify(element.points) : null
-  }]);
-
-  if (error) {
-    toast.error('Error saving element');
-    console.error('Save failed:', error);
-  }
-}, [boardId]);
-
-const handleMouseUp = useCallback(() => {
-  if (isDrawing && currentPath.length > 1) {
-    const newElement: CanvasElementData = {
-      id: Math.random().toString(36).substring(2, 11),
-      type: 'pen',
-      x: Math.min(...currentPath.map(p => p.x)),
-      y: Math.min(...currentPath.map(p => p.y)),
-      points: currentPath,
-      color: '#374151',
-      strokeWidth: 2
-    };
-    setElements(prev => [...prev, newElement]);
-    saveElement(newElement);
-  }
-  setIsDrawing(false);
-  setCurrentPath([]);
-}, [isDrawing, currentPath, saveElement]);
+    setIsDrawing(false);
+    setCurrentPath([]);
+  }, [isDrawing, currentPath, saveElement]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (selectedTool === 'pen') {
@@ -416,30 +357,63 @@ const handleMouseUp = useCallback(() => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // ✅ Early return AFTER all hooks
-  if (loading || !user || !board) {
+  const handleAddCollaborator = async () => {
+    if (!email) {
+      toast.error('Please enter a Gmail address.');
+      return;
+    }
+
+    if (!email.toLowerCase().endsWith('@gmail.com')) {
+      toast.error('Please enter a valid Gmail address.');
+      return;
+    }
+
+    const { data: userData, error } = await supabase
+      .from('profiles')   // replace 'users' with your actual table!
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+    if (error) {
+      console.error('User lookup error:', error);
+      toast.error('Error looking up user.');
+      return;
+    }
+
+    if (!userData) {
+      toast.error('No user found with that Gmail address.');
+      return;
+    }
+
+    const { error: addError } = await supabase
+      .from('board_collaborators')
+      .insert({
+        board_id: boardId,
+        user_id: userData.id,
+        role: 'editor',
+      });
+
+    if (addError) {
+      console.error('Add collaborator error:', addError);
+      toast.error('Failed to add collaborator.');
+    } else {
+      toast.success(`Collaborator ${email} added successfully!`);
+      setOpen(false);
+      setEmail('');
+    }
+  };
+
+  // Only one loading/guard return, after all hooks
+  if (!boardId || loading || !user || !board) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <motion.div
           animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
           className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full"
         />
       </div>
     );
   }
-
-  return (
-    <div
-      className="relative w-full h-screen bg-gray-50"
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
-      onClick={handleCanvasClick}
-    >
-      {/* Render elements, toolbar, etc. */}
-    </div>
-  );
-
 
   // Custom icon components to match Miro exactly
   const CustomIcons = {
@@ -785,8 +759,5 @@ const handleMouseUp = useCallback(() => {
       </div>
     </div>
   );
-}
-function onAdd(email: string) {
-  throw new Error('Function not implemented.');
 }
 

@@ -5,8 +5,7 @@
 "scripts": {
   "dev": "next dev",
   "build": "next build",
-  "start": "node server.js",
-  "dev": "node server/websocket-server.js"
+  "start": "node server/websocket-server.js"
 },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
