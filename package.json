@@ -5,7 +5,7 @@
 "scripts": {
   "dev": "next dev",
   "build": "next build",
-  "start": "node wsServer.js"
+  "start": "node project/server/websocket-server.js"
 },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
