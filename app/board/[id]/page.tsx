@@ -368,29 +368,28 @@ setElements(prev => {
       return;
     }
 
-    const { data: userData, error } = await supabase
-      .from('users') // <-- change 'profiles' to 'users' if needed
-      .select('id')
-      .eq('email', email)
-      .maybeSingle();
-    if (error) {
-      console.error('User lookup error:', error);
-      toast.error('Error looking up user.');
-      return;
-    }
+    // Call the API route to get the user ID by email
+    const res = await fetch('/api/find-user-by-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const userData = await res.json();
 
-    if (!userData) {
-      toast.error('No user found with that Gmail address.');
+    if (!res.ok) {
+      toast.error(userData.error || 'Error looking up user.');
       return;
     }
 
     const { error: addError } = await supabase
       .from('board_collaborators')
-      .insert({
-        board_id: boardId,
-        user_id: userData.id,
-        role: 'editor',
-      });
+      .insert([
+        {
+          board_id: boardId,
+          user_id: userData.id, // user ID from API
+          role: 'editor',
+        },
+      ]);
 
     if (addError) {
       console.error('Add collaborator error:', addError);
