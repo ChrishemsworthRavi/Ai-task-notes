@@ -25,10 +25,10 @@ import { useBoardElements } from '@/lib/useBoardElements';
 import CollaboratorsPanel from '@/components/CollaboratorsPanel';
 import { useCursorSharing } from '@/hooks/useCursorSharing';
 import CursorLayer from '@/components/dashboard/CursorOverlay';
-import { Dialog, DialogContent } from '@radix-ui/react-dialog';
-import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import type { Collaborator } from '@/components/CollaboratorsPanel';
 
 
 interface CanvasElementData {
@@ -70,6 +70,7 @@ export default function BoardPage() {
   const [cursors, setCursors] = useState<Record<string, { x: number; y: number; name: string; color: string }>>({});
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
 
   const userId = 'user-' + Math.floor(Math.random() * 1000);
   const userColor = '#' + Math.floor(Math.random() * 16777215).toString(16);
@@ -238,6 +239,28 @@ setElements(prev => {
     };
   }, [boardId]);
 
+  useEffect(() => {
+    if (!boardId) return;
+    const fetchCollaborators = async () => {
+      const { data, error } = await supabase
+        .from('board_collaborators')
+        .select('user_id, user:users(name)')
+        .eq('board_id', boardId)
+        .order('created_at', { ascending: true });
+
+      if (!error && data) {
+        setCollaborators(
+          (data as any[]).map(c => ({
+            id: c.user_id,
+            name: Array.isArray(c.user) ? (c.user[0]?.name || 'Unknown') : (c.user?.name || 'Unknown'),
+            color: getColorFromId(c.user_id),
+          }))
+        );
+      }
+    };
+    fetchCollaborators();
+  }, [boardId]);
+
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -359,16 +382,11 @@ setElements(prev => {
 
   const handleAddCollaborator = async () => {
     if (!email) {
-      toast.error('Please enter a Gmail address.');
+      toast.error('Please enter an email address.');
       return;
     }
 
-    if (!email.toLowerCase().endsWith('@gmail.com')) {
-      toast.error('Please enter a valid Gmail address.');
-      return;
-    }
-
-    // Call the API route to get the user ID by email
+    // Lookup user by email
     const res = await fetch('/api/find-user-by-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -377,28 +395,52 @@ setElements(prev => {
     const userData = await res.json();
 
     if (!res.ok) {
-      toast.error(userData.error || 'Error looking up user.');
+      toast.error(userData.error || 'User not found.');
       return;
     }
 
+    // Check if already a collaborator
+    const { data: existing, error: existingError } = await supabase
+      .from('board_collaborators')
+      .select('id')
+      .eq('board_id', boardId)
+      .eq('user_id', userData.id)
+      .maybeSingle();
+
+    if (existingError) {
+      toast.error('Error checking existing collaborators.');
+      return;
+    }
+
+    if (existing) {
+      toast.error('This user is already a collaborator.');
+      return;
+    }
+
+    // Try to add collaborator
     const { error: addError } = await supabase
       .from('board_collaborators')
       .insert([
         {
           board_id: boardId,
-          user_id: userData.id, // user ID from API
+          user_id: userData.id,
           role: 'editor',
         },
       ]);
 
     if (addError) {
-      console.error('Add collaborator error:', addError);
-      toast.error('Failed to add collaborator.');
-    } else {
-      toast.success(`Collaborator ${email} added successfully!`);
-      setOpen(false);
-      setEmail('');
+      // Only show this if it's NOT a duplicate error
+      if (addError.code === '23505') {
+        toast.error('This user is already a collaborator.');
+      } else {
+        toast.error('Failed to add collaborator.');
+      }
+      return;
     }
+
+    toast.success('Collaborator added successfully!');
+    setOpen(false);
+    setEmail('');
   };
 
   // Only one loading/guard return, after all hooks
@@ -512,7 +554,7 @@ setElements(prev => {
     <div className="h-screen bg-white flex flex-col">
 <header className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between">
   <div className="flex items-center space-x-4">
-    <div className="flex items-center space-x-3">
+    <div className="flex items-center space-x-3 cursor-pointer" onClick={() => router.push('/dashboard')}>
       <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded flex items-center justify-center">
         <span className="text-white text-xs font-bold">M</span>
       </div>
@@ -530,13 +572,13 @@ setElements(prev => {
       <MoreHorizontal className="h-4 w-4" />
     </Button>
 
-    <Button variant="outline" size="sm" className="text-slate-700">
-      <Crown className="h-4 w-4 mr-2" />
-      Upgrade
-    </Button>
+
 
     <div className="flex items-center space-x-2">
-      <CollaboratorsPanel collaborators={presenceUsers} />
+      <CollaboratorsPanel 
+        collaborators={collaborators} 
+        owner={board ? { id: board.owner_id, name: board.owner } : undefined} 
+      />
       <Button variant="ghost" size="sm" className="text-slate-600">
         <Users className="h-4 w-4" />
       </Button>
@@ -567,28 +609,33 @@ setElements(prev => {
 >
   + Collaborator
 </Button>
+  </div>
+</header>
+
+{/* Move the Add Collaborator Dialog here, outside the header for a clean modal overlay */}
 <Dialog open={open} onOpenChange={setOpen}>
-  <DialogContent>
+  <DialogContent className="custom-modal-center">
     <DialogHeader>
       <DialogTitle>Add Collaborator</DialogTitle>
       <DialogDescription>
         Enter the Gmail address of the collaborator you want to add.
       </DialogDescription>
     </DialogHeader>
-
-    <Input
-      placeholder="Enter Gmail address"
-      value={email}
-      onChange={(e) => setEmail(e.target.value)}
-    />
-
-    <Button onClick={handleAddCollaborator}>
-      Add
-    </Button>
+    <div className="space-y-4">
+      <Input
+        placeholder="Enter Gmail address"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        disabled={false}
+      />
+    </div>
+    <DialogFooter>
+      <Button onClick={handleAddCollaborator} disabled={!email.trim()}>
+        Add
+      </Button>
+    </DialogFooter>
   </DialogContent>
 </Dialog>
-  </div>
-</header>
 
 
       <div className="flex-1 flex">

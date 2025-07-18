@@ -62,29 +62,9 @@ export default function Header({ user }: HeaderProps) {
           Invite members
         </Button>
         
-        <Button
-          size="sm"
-          className="bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <Zap className="h-4 w-4 mr-2" />
-          Upgrade
-        </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="p-2 hover:bg-slate-100"
-        >
-          <Grid3x3 className="h-4 w-4 text-slate-600" />
-        </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="p-2 hover:bg-slate-100"
-        >
-          <Bell className="h-4 w-4 text-slate-600" />
-        </Button>
+
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

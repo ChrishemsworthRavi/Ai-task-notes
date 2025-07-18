@@ -17,6 +17,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
 import type { Board } from "@/lib/boards";
+import CreateBoardDialog from './CreateBoardDialog';
 
 
 interface BoardsTableProps {
@@ -31,13 +32,14 @@ export interface BoardTransformed extends Board {
 }
 
 
-export default function BoardsTable({ currentUser }: BoardsTableProps) {
+export default function BoardsTable({ currentUser, onBoardsChange }: BoardsTableProps) {
   const [boards, setBoards] = useState<BoardTransformed[]>([]);
   const [sortBy, setSortBy] = useState('last-opened');
   const [filterBy, setFilterBy] = useState('all-boards');
   const [ownedBy, setOwnedBy] = useState('anyone');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const router = useRouter();
+  const [dialogOpen, setDialogOpen] = useState(false);
 
 
   
@@ -205,15 +207,19 @@ const sortedAndFilteredBoards = boards
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-900">Boards in this team</h2>
         <div className="flex items-center space-x-4">
-          <Button variant="outline" size="sm">
-            Explore templates
-          </Button>
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
+
+          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => setDialogOpen(true)}>
             <span className="mr-2">+</span>
             Create new
           </Button>
         </div>
       </div>
+      <CreateBoardDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onCreated={onBoardsChange}
+        templateType="blank"
+      />
 
       {/* Filters */}
       <div className="flex items-center justify-between">
