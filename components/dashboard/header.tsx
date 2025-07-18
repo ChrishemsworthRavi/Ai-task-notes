@@ -53,19 +53,6 @@ export default function Header({ user }: HeaderProps) {
 
       {/* Right Actions */}
       <div className="flex items-center space-x-2">
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-slate-700 border-slate-200 hover:bg-slate-50"
-        >
-          <UserPlus className="h-4 w-4 mr-2" />
-          Invite members
-        </Button>
-        
-
-
-
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="p-1 h-8 w-8 rounded-full">
